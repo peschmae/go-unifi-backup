@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"os"
+	"path"
 	"time"
 	c "unifi-backup/src/config"
 )
@@ -43,6 +44,7 @@ func main() {
 	viper.SetConfigType("yml")
 	var configuration c.Configuration
 	var debug bool
+	now := time.Now()
 
 	pflag.BoolVar(&debug, "debug", false, "Output debug logs")
 	pflag.Parse()
@@ -69,7 +71,7 @@ func main() {
 		fmt.Println("Version:\t", configuration.Unifi.ControllerVersion)
 		fmt.Println("\nBackup config")
 		fmt.Println("Output directory:\t\t", configuration.Backup.OutputDirectory)
-		fmt.Println("Number of backups to keep:\t", configuration.Backup.Keep)
+		fmt.Println("Days of backups to keep:\t", configuration.Backup.Keep)
 		fmt.Println("")
 	}
 
@@ -148,7 +150,7 @@ func main() {
 	}
 	defer res.Body.Close()
 
-	var filepath = configuration.Backup.OutputDirectory + time.Now().Format("2006-01-02-15-04") + ".unf"
+	var filepath = configuration.Backup.OutputDirectory + now.Format("2006-01-02_15-04") + ".unf"
 	// Create the file
 	out, err := os.Create(filepath)
 	if err != nil {
@@ -161,4 +163,23 @@ func main() {
 
 	fmt.Printf("Created backup at %v\n", filepath)
 
+	// cleanup old logs
+	if debug {
+		fmt.Println("Starting to cleanup old backups")
+	}
+	fileInfo, err := ioutil.ReadDir(configuration.Backup.OutputDirectory)
+	if err != nil {
+		fmt.Println(err.Error())
+	}
+
+	for _, info := range fileInfo {
+		if diff := now.Sub(info.ModTime()); diff > time.Duration(configuration.Backup.Keep)*24*time.Hour {
+			if debug {
+				fmt.Printf("Deleting %s which is %s old\n", info.Name(), diff)
+			}
+			os.Remove(path.Join(configuration.Backup.OutputDirectory, info.Name()))
+		}
+	}
+
+	fmt.Println("Backup finished")
 }
