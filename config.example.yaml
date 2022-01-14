@@ -1,0 +1,11 @@
+unifi:
+  server: https://localhost:8443
+  username: blub
+  password: blub
+  # this is used in the path for the download
+  controller_version: 6.0.45
+
+backup:
+  output_directory: ./blub/
+  # cleanup files older than x days
+  keep: 10
