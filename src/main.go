@@ -1,12 +1,38 @@
 package main
 
 import (
+	"bytes"
+	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
+	"io"
+	"io/ioutil"
+	"net/http"
+	"net/http/cookiejar"
 	"os"
+	"time"
 	c "unifi-backup/src/config"
 )
+
+var client http.Client
+
+func init() {
+	// this is rather minimalist and can be insecure. But we are only accessing one server so we're okay
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		fmt.Printf("Got error while creating cookie jar %s", err.Error())
+	}
+	// the Unifi controller uses a self-signed certificate by default, so we skip the verification
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	client = http.Client{
+		Jar:       jar,
+		Transport: tr,
+	}
+}
 
 func main() {
 
@@ -44,6 +70,7 @@ func main() {
 		fmt.Println("\nBackup config")
 		fmt.Println("Output directory:\t\t", configuration.Backup.OutputDirectory)
 		fmt.Println("Number of backups to keep:\t", configuration.Backup.Keep)
+		fmt.Println("")
 	}
 
 	if _, err := os.Stat(configuration.Backup.OutputDirectory); err != nil {
@@ -64,5 +91,74 @@ func main() {
 			os.Exit(1)
 		}
 	}
+
+	if debug {
+		fmt.Printf("Trying to login to Unifi Controller at %v\n", configuration.Unifi.Server)
+	}
+
+	loginValues := map[string]string{"username": configuration.Unifi.Username, "password": configuration.Unifi.Password}
+	jsonData, err := json.Marshal(loginValues)
+	if err != nil {
+		fmt.Printf("Error while unmarshaling: %v", err)
+	}
+	res, err := client.Post(configuration.Unifi.Server+"/api/login", "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		fmt.Printf("Error while making login request: %v", err)
+	}
+	if res.StatusCode != 200 {
+		fmt.Println("Couldn't login to the unifi controller")
+		if debug {
+			body, _ := ioutil.ReadAll(res.Body)
+			bodyString := string(body)
+			fmt.Println(bodyString)
+		}
+		os.Exit(1)
+	} else if debug {
+		fmt.Printf("Successfully logged in")
+	}
+
+	if debug {
+		fmt.Println("Trying to trigger backup creation")
+	}
+	backupValues := map[string]interface{}{"cmd": "async-backup", "days": 0}
+	jsonData, err = json.Marshal(backupValues)
+
+	if err != nil {
+		fmt.Printf("Error while unmarshaling: %v", err)
+	}
+	res, err = client.Post(configuration.Unifi.Server+"/api/s/default/cmd/system", "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		fmt.Printf("Error while making login request: %v", err)
+	}
+	if res.StatusCode != 200 {
+		fmt.Printf("Couldn't trigger creation of backup")
+		os.Exit(1)
+	} else if debug {
+		fmt.Println("Triggered backup creation")
+	}
+
+	if debug {
+		fmt.Println("Downloading file")
+	}
+
+	// Get the data
+	res, err = client.Get(configuration.Unifi.Server + "/dl/backup/" + configuration.Unifi.ControllerVersion + ".unf")
+	if err != nil {
+		fmt.Println(err)
+	}
+	defer res.Body.Close()
+
+	var filepath = configuration.Backup.OutputDirectory + time.Now().Format("2006-01-02-15-04") + ".unf"
+	// Create the file
+	out, err := os.Create(filepath)
+	if err != nil {
+		fmt.Println(err)
+	}
+	defer out.Close()
+
+	// Write the body to file
+	_, err = io.Copy(out, res.Body)
+
+	fmt.Printf("Created backup at %v\n", filepath)
 
 }
