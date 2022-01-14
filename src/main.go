@@ -51,6 +51,7 @@ func main() {
 
 	if err := viper.ReadInConfig(); err != nil {
 		fmt.Printf("Error reading config file, %s", err)
+		os.Exit(1)
 	}
 
 	// Set undefined variables
